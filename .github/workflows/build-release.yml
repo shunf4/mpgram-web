@@ -45,9 +45,11 @@ jobs:
         run: composer update --no-interaction --prefer-dist
 
       - name: Apply MadelineProto patches
-        # Same effect as the README's `patch -p0`, using git apply which is
-        # always available on the runner.
-        run: git apply patches/InternalDoc.php.patch patches/Files.php.patch patches/UpdateHandler.php.patch
+        # Same effect as the README's `patch -p0`, using git apply -p0 (git
+        # apply strips one path component by default, which would turn
+        # vendor/danog/... into danog/...) — git is always available on the
+        # runner, `patch` is not.
+        run: git apply -p0 patches/InternalDoc.php.patch patches/Files.php.patch patches/UpdateHandler.php.patch
 
       - name: Create config files
         # api_values.php is pre-filled with MadelineProto's public placeholder
@@ -69,6 +71,14 @@ jobs:
           <?php
           // Router for `php -S`: serve existing static files as-is, run php pages.
           $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+          // Deny access to the sessions directory and log files (README:
+          // "Deny access to sessions directory and MadelineProto.log") —
+          // normally done via web-server config, here in the router.
+          if (strpos($path, '/s/') === 0 || strpos($path, '/s?') === 0
+              || substr($path, -4) === '.log') {
+              http_response_code(403);
+              return true;
+          }
           $file = __DIR__ . $path;
           if ($path !== '/' && is_file($file) && pathinfo($file, PATHINFO_EXTENSION) !== 'php') {
               return false;
