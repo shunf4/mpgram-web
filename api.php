@@ -191,6 +191,12 @@ function setupMadelineProto($user = null): void
         $app->setSystemVersion($_SERVER['HTTP_X_MPGRAM_SYSTEM']);
     }
     $sets->setAppInfo($app);
+    if (defined('PROXY_ENABLED') && PROXY_ENABLED) {
+        $sets->getConnection()->addProxy(\danog\MadelineProto\Stream\Proxy\SocksProxy::class, [
+            'address' => PROXY_ADDRESS,
+            'port' => PROXY_PORT,
+        ] + (PROXY_USERNAME !== null ? ['username' => PROXY_USERNAME, 'password' => PROXY_PASSWORD] : []));
+    }
     try {
         $MP = new \danog\MadelineProto\API(sessionspath . $user . '.madeline', $sets);
     } catch (Exception $e) {

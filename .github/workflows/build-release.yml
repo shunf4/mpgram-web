@@ -91,16 +91,16 @@ jobs:
           }
           require $target;
           EOF
-          printf '@echo off\r\nrem MPGram Web launcher: starts the PHP built-in web server on port 8080\r\nrem Edit api_values.php and config.php before use!\r\ncd /d "%%~dp0"\r\nphp -S 0.0.0.0:8080 router.php\r\npause\r\n' > start.bat
-          printf '#!/bin/sh\n# MPGram Web launcher: starts the PHP built-in web server on port 8080\n# Edit api_values.php and config.php before use!\ncd "$(dirname "$0")"\nexec php -S 0.0.0.0:8080 router.php\n' > start.sh
+          printf '@echo off\r\nrem MPGram Web launcher: starts the PHP built-in web server on port 6747\r\nrem Edit api_values.php and config.php before use!\r\ncd /d "%%~dp0"\r\nphp -S 0.0.0.0:6747 router.php\r\npause\r\n' > start.bat
+          printf '#!/bin/sh\n# MPGram Web launcher: starts the PHP built-in web server on port 6747\n# Edit api_values.php and config.php before use!\ncd "$(dirname "$0")"\nexec php -S 0.0.0.0:6747 router.php\n' > start.sh
           chmod +x start.sh
 
       - name: Smoke test (boot the built-in server and fetch the login page)
         run: |
-          php -S 127.0.0.1:8080 router.php > server.log 2>&1 &
+          php -S 127.0.0.1:6747 router.php > server.log 2>&1 &
           SERVER_PID=$!
           sleep 5
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/index.php)
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:6747/index.php)
           echo "HTTP ${CODE}"
           cat server.log || true
           kill $SERVER_PID
@@ -172,7 +172,7 @@ jobs:
               1. Unpack the zip.
               2. Edit `api_values.php` (your api_id / api_hash) and `config.php`.
               3. Windows: double-click `start.bat`. Linux: `./start.sh`.
-              4. Open http://localhost:8080 in a browser.
+              4. Open http://localhost:6747 in a browser.
 
             Requires a locally installed PHP 8.1+ (built and tested with 8.3),
             with extensions gd, mbstring, xml, gmp, iconv, ffi; see README.

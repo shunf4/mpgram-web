@@ -40,6 +40,14 @@ define('UPLOAD_SIZE_LIMIT', 20 * 1024 * 1024);
 // MadelineProto EnablePeerInfoDb setting, setting false will reduce sessions size, but avatars will stop loading
 define('ENABLE_PEER_DB', true);
 
+// SOCKS5 proxy for connecting to Telegram (MadelineProto)
+define('PROXY_ENABLED', false);
+define('PROXY_ADDRESS', '127.0.0.1');
+define('PROXY_PORT', 1080);
+// username/password, or null if the proxy doesn't require auth
+define('PROXY_USERNAME', null);
+define('PROXY_PASSWORD', null);
+
 // Override $_SERVER["SERVER_NAME"] for links
 //define('SERVER_NAME', "example.com");
 

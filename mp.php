@@ -964,6 +964,12 @@ class MP {
         $c = $sets->getConnection();
         $c->setTimeout(10);
         $c->setRetry(false);
+        if (defined('PROXY_ENABLED') && PROXY_ENABLED) {
+            $c->addProxy(\danog\MadelineProto\Stream\Proxy\SocksProxy::class, [
+                'address' => PROXY_ADDRESS,
+                'port' => PROXY_PORT,
+            ] + (PROXY_USERNAME !== null ? ['username' => PROXY_USERNAME, 'password' => PROXY_PASSWORD] : []));
+        }
         return $sets;
     }
     
