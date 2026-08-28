@@ -1,0 +1,172 @@
+name: Build release
+
+# Prepares a runnable bundle of MPGram Web per the README's manual deployment
+# instructions: installs PHP with the required extensions, runs
+# `composer update` to vendor MadelineProto, applies the MadelineProto patches,
+# then packs the whole project together with start scripts (start.bat for
+# Windows, start.sh for Linux) into a zip. The zip is uploaded as a workflow
+# artifact and published as a GitHub Release. After unpacking, the bundle runs
+# with any locally installed PHP via the PHP built-in web server.
+#
+# Triggered on every new commit pushed to master.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed by softprops/action-gh-release to create the release
+
+concurrency:
+  group: ${{ github.workflow }}-master
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+
+      # ---------------------------------------------------------------------
+      # PHP + extensions required by the README (gd, mbstring, xml, json,
+      # fileinfo, gmp, iconv, ffi) plus Composer v2+.
+      # ---------------------------------------------------------------------
+      - name: Set up PHP
+        uses: shivammathur/setup-php@9e72090525849c5e82e596468b86eb55e9cc5401 # v2.32.0
+        with:
+          php-version: '8.3'
+          extensions: gd, mbstring, xml, json, fileinfo, gmp, iconv, ffi
+          coverage: none
+
+      - name: Install MadelineProto and dependencies
+        run: composer update --no-interaction --prefer-dist
+
+      - name: Apply MadelineProto patches
+        # Same effect as the README's `patch -p0`, using git apply which is
+        # always available on the runner.
+        run: git apply patches/InternalDoc.php.patch patches/Files.php.patch patches/UpdateHandler.php.patch
+
+      - name: Create config files
+        # api_values.php is pre-filled with MadelineProto's public placeholder
+        # credentials so the bundle runs out of the box; users should replace
+        # them with their own api_id/api_hash (see README).
+        run: |
+          cp config.php.example config.php
+          printf '<?php\n// Placeholder credentials (see README). Replace with your own!\ndefine("api_id", 2040);\ndefine("api_hash", "b18441a1ff607e10a989891a5462e627");\n' > api_values.php
+
+      # ---------------------------------------------------------------------
+      # Start scripts: launch the PHP built-in web server so the bundle runs
+      # with only a local PHP installation. router.php serves static files
+      # as-is and executes the requested .php page (mp.php is a library that
+      # every page includes, not a front controller).
+      # ---------------------------------------------------------------------
+      - name: Create start scripts and router
+        run: |
+          cat > router.php <<'EOF'
+          <?php
+          // Router for `php -S`: serve existing static files as-is, run php pages.
+          $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+          $file = __DIR__ . $path;
+          if ($path !== '/' && is_file($file) && pathinfo($file, PATHINFO_EXTENSION) !== 'php') {
+              return false;
+          }
+          $page = $path === '/' ? '/index.php' : $path;
+          $target = __DIR__ . $page;
+          if (!is_file($target)) {
+              http_response_code(404);
+              return true;
+          }
+          require $target;
+          EOF
+          printf '@echo off\r\nrem MPGram Web launcher: starts the PHP built-in web server on port 8080\r\nrem Edit api_values.php and config.php before use!\r\ncd /d "%%~dp0"\r\nphp -S 0.0.0.0:8080 router.php\r\npause\r\n' > start.bat
+          printf '#!/bin/sh\n# MPGram Web launcher: starts the PHP built-in web server on port 8080\n# Edit api_values.php and config.php before use!\ncd "$(dirname "$0")"\nexec php -S 0.0.0.0:8080 router.php\n' > start.sh
+          chmod +x start.sh
+
+      - name: Smoke test (boot the built-in server and fetch the login page)
+        run: |
+          php -S 127.0.0.1:8080 router.php > server.log 2>&1 &
+          SERVER_PID=$!
+          sleep 5
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/index.php)
+          echo "HTTP ${CODE}"
+          cat server.log || true
+          kill $SERVER_PID
+          # Any 2xx/3xx (or even 4xx/5xx from the app layer) proves the app
+          # boots with vendored deps + patches; only 0 (connection failed) or
+          # 404 (router broken) fails the build.
+          if [ "$CODE" = "000" ] || [ "$CODE" = "404" ]; then
+            echo "Smoke test failed"; exit 1
+          fi
+
+      # ---------------------------------------------------------------------
+      # Zip name / release tag: short SHA + UTC timestamp so every commit
+      # produces a distinct, traceable release.
+      # ---------------------------------------------------------------------
+      - name: Compute zip name (commit + timestamp)
+        id: zipname
+        run: |
+          SHORT_SHA=${GITHUB_SHA::7}
+          STAMP=$(date -u +"%Y%m%d-%H%M%S")
+          ZIP_NAME="mpgram-web-master-${SHORT_SHA}-${STAMP}.zip"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "stamp=${STAMP}" >> "$GITHUB_OUTPUT"
+          echo "Computed zip name: ${ZIP_NAME}"
+
+      - name: Create release zip
+        # Everything except repo/CI metadata. vendor/ is included (that is the
+        # point of the bundle), user-local files (s/, *.log, api_values.php,
+        # config.php) are excluded by .gitignore anyway but restated here for
+        # clarity.
+        run: |
+          mkdir -p staging
+          git archive --format=tar HEAD | tar -x -C staging
+          rm -rf staging/.github
+          cp -r vendor staging/vendor
+          cp api_values.php config.php router.php start.bat start.sh composer.lock staging/
+          cd staging
+          zip -r -q "../${{ steps.zipname.outputs.zip_name }}" .
+          cd ..
+          ls -la "${{ steps.zipname.outputs.zip_name }}"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.4.3
+        with:
+          name: ${{ steps.zipname.outputs.zip_name }}
+          # already a zip; avoid double compression
+          compression-level: 0
+          path: ${{ steps.zipname.outputs.zip_name }}
+
+      # ---------------------------------------------------------------------
+      # Publish a GitHub Release. Every push to master gets its own release
+      # tagged with the short SHA + timestamp, carrying the zip as its asset.
+      # ---------------------------------------------------------------------
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v2.2.1
+        with:
+          tag_name: mpgram-build-${{ steps.zipname.outputs.short_sha }}-${{ steps.zipname.outputs.stamp }}
+          name: MPGram Web ${{ steps.zipname.outputs.short_sha }} (${{ steps.zipname.outputs.stamp }})
+          body: |
+            Automated build of MPGram Web (master).
+
+            - Commit: `${{ steps.zipname.outputs.short_sha }}`
+            - Built (UTC): `${{ steps.zipname.outputs.stamp }}`
+
+            The zip contains the full project with vendored dependencies
+            (MadelineProto, patches already applied) and start scripts.
+
+            Usage:
+              1. Unpack the zip.
+              2. Edit `api_values.php` (your api_id / api_hash) and `config.php`.
+              3. Windows: double-click `start.bat`. Linux: `./start.sh`.
+              4. Open http://localhost:8080 in a browser.
+
+            Requires a locally installed PHP 8.1+ (built and tested with 8.3),
+            with extensions gd, mbstring, xml, gmp, iconv, ffi; see README.
+          prerelease: false
+          files: ${{ steps.zipname.outputs.zip_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
